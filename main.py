@@ -6,6 +6,7 @@ import logging
 from datetime import datetime
 import json
 from io import BytesIO
+from urllib.parse import urlparse, parse_qs
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for all routes
@@ -17,9 +18,28 @@ logging.basicConfig(level=logging.INFO,
 # Global variable to store start time
 start_time = datetime.now()
 
+def extract_video_id(url):
+    """Extract the video ID from various forms of YouTube URLs."""
+    parsed_url = urlparse(url)
+    if parsed_url.hostname in ('youtu.be', 'www.youtu.be'):
+        return parsed_url.path[1:]
+    if parsed_url.hostname in ('youtube.com', 'www.youtube.com'):
+        if parsed_url.path == '/watch':
+            return parse_qs(parsed_url.query)['v'][0]
+        if parsed_url.path[:7] == '/embed/':
+            return parsed_url.path.split('/')[2]
+        if parsed_url.path[:3] == '/v/':
+            return parsed_url.path.split('/')[2]
+    # If we get here, it means we couldn't extract the ID
+    return None
+
 def get_video_info(video_url):
     try:
-        yt = YouTube(video_url)
+        video_id = extract_video_id(video_url)
+        if not video_id:
+            return {"error": "Invalid YouTube URL"}
+
+        yt = YouTube(f"https://www.youtube.com/watch?v={video_id}")
         streams = yt.streams.filter(progressive=True)
         
         available_resolutions = [
@@ -71,11 +91,18 @@ def download_video():
         return jsonify({"error": "No URL provided"}), 400
     
     try:
-        yt = YouTube(video_url)
+        video_id = extract_video_id(video_url)
+        if not video_id:
+            return jsonify({"error": "Invalid YouTube URL"}), 400
+
+        yt = YouTube(f"https://www.youtube.com/watch?v={video_id}")
         if itag:
             stream = yt.streams.get_by_itag(int(itag))
         else:
             stream = yt.streams.get_highest_resolution()
+        
+        if not stream:
+            return jsonify({"error": "No suitable stream found"}), 404
         
         buffer = BytesIO()
         stream.stream_to_buffer(buffer)
